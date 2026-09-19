@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Akai S950 Sample Loader</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div class="app">
+    <div class="header">
+      <div class="logo">S950</div>
+      <div class="logo-sub">Akai S950 &middot; SuperOS 4.0.3 &middot; Wi-Fi drop-box</div>
+    </div>
+
+    <div class="banner" id="errBanner"></div>
+
+    <!-- progress for anything that runs item by item -->
+    <div class="progress" id="prog" hidden>
+      <div class="progress-label" id="progLabel"></div>
+      <div class="progress-track"><div class="progress-fill" id="progFill"></div></div>
+    </div>
+
+    <!-- in-page confirm: the browser's own dialog is easy to dismiss by
+         reflex, and this one can say exactly what is about to happen -->
+    <div class="modal" id="modal" hidden>
+      <div class="modal-box">
+        <div class="modal-title" id="modalTitle">Are you sure?</div>
+        <div class="modal-body" id="modalBody"></div>
+        <div class="modal-actions">
+          <button id="modalNo">Cancel</button>
+          <button id="modalYes" class="primary danger">Confirm</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Board / link status -->
+    <div class="strip">
+      <span class="dot" id="boardDot"></span>
+      <span class="label">Board</span>
+      <span class="mono" id="boardName">&mdash;</span>
+      <span class="spacer-sm"></span>
+      <span class="label">Ping</span>
+      <span class="mono" id="pingMs">&mdash;</span>
+      <span class="spacer-sm"></span>
+      <span class="label">Image</span>
+      <span class="mono" id="imageName">&mdash;</span>
+      <span class="spacer-sm"></span>
+      <span class="label">Mailbox</span>
+      <span class="mono" id="mailbox">&mdash;</span>
+      <span class="spacer"></span>
+      <span class="label">Pending</span>
+      <span class="mono" id="pendingInfo">0</span>
+      <button id="btnPush" title="Push the pending byte ranges to the board over Wi-Fi">Push pending</button>
+      <button id="btnVerify" title="Read the whole served image back and compare it with the local mirror">Verify card</button>
+    </div>
+
+    <!-- Import -->
+    <div class="panel">
+      <div class="panel-title">Import audio
+        <span class="phint">WAV, AIFF, MP3, FLAC, anything the browser decodes. Mono-summed, resampled to the chosen rate, 16-bit.</span>
+      </div>
+      <div class="panel-body">
+        <div class="drop" id="drop">
+          <div>Drop audio files here or <button id="btnPick">choose files</button></div>
+          <input type="file" id="filePick" accept="audio/*,.wav,.aif,.aiff,.flac,.mp3,.ogg" multiple hidden />
+        </div>
+        <div class="strip strip-inner">
+          <span class="label">Normalize</span>
+          <input type="checkbox" id="chkNorm" checked />
+          <span class="label" title="One-shot samples ignore the loop; looped samples repeat from the loop point">Playback</span>
+          <select id="selMode">
+            <option value="S" selected>One-shot</option>
+            <option value="L">Looped</option>
+          </select>
+          <span class="label" title="The S950 stores a rate per sample and tunes the hardware to it, so a lower rate uses proportionally less memory and plays back correctly. 40000 is the stock rate.">Rate</span>
+          <select id="selRate">
+            <option value="40000" selected>40000 Hz</option>
+            <option value="32000">32000 Hz</option>
+            <option value="28000">28000 Hz</option>
+            <option value="24000">24000 Hz</option>
+            <option value="20000">20000 Hz</option>
+            <option value="16000">16000 Hz</option>
+            <option value="12000">12000 Hz</option>
+          </select>
+          <span class="label" title="On: the sampler pulls each file into its sample memory at the next idle poll. Off: the file is written to the card and left there as library - use its 'load into RAM' button when you want it.">Load into S950 RAM</span>
+          <input type="checkbox" id="chkLoad" checked />
+          <span class="label" title="Replay start and end, in points. Blank = whole sample. Trimming here does not save memory - the whole sample is loaded - but it is what the machine plays.">Trim</span>
+          <input type="number" id="smpStart" min="0" placeholder="start" style="width:5.5em" />
+          <input type="number" id="smpEnd" min="0" placeholder="end" style="width:5.5em" />
+          <span class="label" title="Panel loudness, 0-99. Blank = 50.">Loud</span>
+          <input type="number" id="smpLoud" min="0" max="99" placeholder="50" style="width:4.5em" />
+          <span class="spacer"></span>
+          <span class="mono" id="rateNote">12-bit</span>
+          <button id="btnSendAll" class="primary" disabled>Send all</button>
+          <button id="btnClear" disabled>Clear queue</button>
+        </div>
+        <div id="smpEdit"></div>
+        <table class="tbl" id="queueTbl">
+          <thead><tr><th>Name (10, A-Z 0-9 space)</th><th>Source</th><th>Length</th><th>Seconds</th><th>Mode</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Build a program around a sample -->
+    <div class="panel">
+      <div class="panel-title">Build a program
+        <span class="phint">Add a keygroup per sample, each over its own key range, then create. With no keygroups added it uses the sample and range above. Samples must be on the card; any that are missing from memory are loaded first.</span>
+      </div>
+      <div class="panel-body">
+        <div class="strip strip-inner">
+          <span class="label">Name</span>
+          <input type="text" id="progName" maxlength="10" size="10" placeholder="MYPROG" />
+          <span class="label">Sample</span>
+          <select id="progSample"><option value="">(refresh to list)</option></select>
+          <span class="label" title="MIDI note numbers. 60 is middle C.">Keys</span>
+          <input type="number" id="progLo" min="0" max="127" value="24" style="width:4.5em" />
+          <span class="label">to</span>
+          <input type="number" id="progHi" min="0" max="127" value="127" style="width:4.5em" />
+          <button id="btnAddKg">Add keygroup</button>
+          <span class="spacer"></span>
+          <span class="label" title="Load it into the sampler as soon as it is written. Any sample it needs is loaded first.">Load</span>
+          <input type="checkbox" id="progLoad" checked />
+          <button id="btnProg" class="primary">Create program</button>
+        </div>
+        <div class="strip strip-inner">
+          <span class="label" title="Set one parameter across every keygroup at once, the way a bulk keygroup edit works on the machine.">Bulk edit</span>
+          <select id="bulkField"></select>
+          <input type="number" id="bulkValue" style="width:5.5em" />
+          <button id="btnBulk">Apply to all keygroups</button>
+          <span class="spacer"></span>
+          <button id="btnKgReset">Reset all to template</button>
+        </div>
+        <div id="kgList"></div>
+      </div>
+    </div>
+
+    <!-- What the sampler says is in its RAM -->
+    <div class="panel">
+      <div class="panel-title">Sampler memory
+        <span class="phint" id="ramHint">not asked yet</span>
+        <button class="panel-close" id="btnUnloadSel" title="Remove every ticked item from the sampler's memory." disabled>Unload selected</button>
+        <button class="panel-close" id="btnState" title="Ask the sampler what is in its memory. Needed because the DISK page can load and clear memory without the editor seeing it.">Read from S950</button>
+      </div>
+      <div class="panel-body">
+        <div class="strip strip-inner">
+          <span class="label">Used</span>
+          <span class="mono" id="ramUsed">&mdash;</span>
+          <span class="spacer-sm"></span>
+          <span class="label">Free</span>
+          <span class="mono" id="ramFree">&mdash;</span>
+          <span class="spacer"></span>
+          <div class="meter"><div class="meter-fill" id="ramBar"></div></div>
+        </div>
+        <table class="tbl" id="ramTbl">
+          <thead><tr><th></th><th>Name</th><th>Type</th><th>Points</th><th>Seconds</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Drop-box contents -->
+    <div class="panel">
+      <div class="panel-title">Drop-box volume
+        <span class="phint" id="diskHint"></span>
+        <button class="panel-close" id="btnLoadSel" title="Load every ticked file into the sampler's memory, one at a time, waiting for each to arrive." disabled>Load selected</button>
+        <button class="panel-close" id="btnClearBox" title="Delete every file in the drop-box volume on the card. Does not touch what is already loaded in the sampler's memory.">Empty drop-box</button>
+        <button class="panel-close" id="btnRefresh" title="Reload">&#8635;</button>
+      </div>
+      <div class="panel-body">
+        <table class="tbl" id="diskTbl">
+          <thead><tr><th></th><th>#</th><th>Name</th><th>Type</th><th>Size</th><th>Block</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Console -->
+    <div class="monitor">
+      <div class="monitor-head">
+        <span class="t">Transfer log</span>
+        <span class="mono" id="syncMsg"></span>
+        <span class="spacer"></span>
+        <button id="btnLogToggle">Hide</button>
+      </div>
+      <div class="monitor-body" id="logBody"><pre id="log"></pre></div>
+    </div>
+
+    <footer>
+      Each file is encoded to the S950's own disk format and written into a local mirror of the card image, then only the changed byte
+      ranges go to the ZuluSCSI over Wi-Fi (UDP 5150) and into the image it is serving. The announcement in mailbox block 3 is written
+      last, so a transfer that dies never points the sampler at blocks that are not there yet. SuperOS 4.0.3 polls that mailbox about
+      once a second while the sampler is idle and hands the file to the stock loader: the sample appears in memory, named, with no DISK
+      page and no disk image to build. The sampler stays on the bus throughout.
+    </footer>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>
