@@ -68,8 +68,10 @@ mailbox. No hardware.
 ## Provenance
 
 The encoders in `tools/` (`build_hdimage.py`, `build_sounddisk.py`,
-`s950dropbox.py`, `s950wifi.py`, `s950api.py`, `zulu_udp.py`) are copied from
-the S950 OS repo, which stays upstream for them: fix a format bug there too.
+`s950dropbox.py`, `s950wifi.py`, `s950api.py`) are copied from the S950 OS
+repo, which stays upstream for them: fix a format bug there too.
+`tools/zulu_udp.py` is shared verbatim with the ZuluSCSI firmware repo and
+the S1000 web editor; that firmware repo is its canonical copy.
 `data/program_template.bin` is the 108-byte TONE PRGRM record
 `build_sounddisk.program_file()` clones, lifted once out of a sounddisk
 floppy image that is not redistributed here.
