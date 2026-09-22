@@ -15,7 +15,7 @@ makes 16-bit PCM -> `POST /api/sample` -> `tools/s950wifi.plan_wav()` encodes
 it to the S950's own disk format and deposits it in the local mirror
 (`build/S950_HD0.img`: FAT allocation, directory entry, mailbox serial),
 recording the changed byte ranges -> those ranges go to the ZuluSCSI over
-UDP 5150 and into the image it is serving -> SuperOS 4.0.3 polls mailbox
+UDP 5150 and into the image it is serving -> SuperOS 5.0 polls mailbox
 block 3 about once a second while the sampler is idle, sees the new serial
 and hands the file to the stock loader.
 
@@ -25,7 +25,7 @@ bus throughout.
 
 ## Requirements
 
-- SuperOS **4.0.3** on the S950 (the drop-box poller).
+- SuperOS **5.0** on the S950 (the drop-box poller).
   Boot it from the Gotek or from the `SUPEROS` volume on the
   card.
 - A SCSI volume selected once on the DISK page, so the firmware's "an hd

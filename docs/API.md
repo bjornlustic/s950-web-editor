@@ -67,7 +67,7 @@ ASCII (S950 file names); longer names are cut. `type` is `S` (sample) or
 
 ### GET /api/v1/version
 
-    {"api": 1, "os": "4.0.3", "image": "HD0.img", "host": "192.168.1.250", "id": 0, "auth": true}
+    {"api": 1, "os": "5.0.0", "image": "HD0.img", "host": "192.168.1.250", "id": 0, "auth": true}
 
 ### GET /api/v1/status
 

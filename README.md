@@ -55,7 +55,7 @@ firmware; that is its own repo, and its UDP protocol client is
 
 ## Requires
 
-Python 3, stdlib only. SuperOS 4.0.3 on the sampler for the drop-box poller
+Python 3, stdlib only. SuperOS 5.0 on the sampler for the drop-box poller
 (separate release channel; no firmware or ROM ships here).
 
 ## Check
