@@ -20,6 +20,8 @@ starting point for writing your own software that controls the sampler.
 
 ## Quick start
 
+**New here? Follow the step-by-step [installation guide](docs/INSTALL.md).**
+
     python3 selftest.py                               # no hardware needed
     mkdir -p build && python3 tools/s950dropbox.py new build/S950_HD0.img
     python3 web/server.py                             # opens http://localhost:8150
