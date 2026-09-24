@@ -1,14 +1,50 @@
 # S950 web editor and drop box
 
 Drop audio on a browser page and it appears in an Akai S950's RAM seconds
-later. No DISK page, no disk image to build by hand, no card to eject.
+later. No DISK page, no disk image to build by hand. The same repo is the
+starting point for writing your own software that controls the sampler.
 
-    python3 tools/s950dropbox.py new build/S950_HD0.img
-    python3 web/server.py --local
+## Requirements
 
-Full flow, requirements and speed numbers: [web/README.md](web/README.md).
-HTTP API: [docs/API.md](docs/API.md), with a stdlib-only client in
-[tools/s950api.py](tools/s950api.py).
+- An Akai S950 running **superOS S950 5.0.0**, from
+  <https://superos303.com>. No firmware, ROM or OS image ships in this
+  repo.
+- A SCSI interface in the S950: the Akai **IB-109** or a **Rephlux** SCSI
+  board.
+- A **ZuluSCSI** as the S950's SCSI disk. For live loading over Wi-Fi it
+  runs the superOS loader firmware (a separate repo); over USB-C the
+  editor writes to its card directly.
+- Python 3 (stdlib only). For MIDI control, a MIDI interface cabled both
+  ways and `pip install mido python-rtmidi`. The USB-C card mode uses
+  macOS tools and `pyserial`.
+
+## Quick start
+
+    python3 selftest.py                               # no hardware needed
+    mkdir -p build && python3 tools/s950dropbox.py new build/S950_HD0.img
+    python3 web/server.py                             # opens http://localhost:8150
+
+Then follow the three steps on the page: connect to the ZuluSCSI (Wi-Fi
+or USB-C), check that the sampler is in drop-box mode, drop audio. Full
+flow and speed numbers: [web/README.md](web/README.md). `--local` writes
+only to the local image file, for trying things without a board (see the
+traps below).
+
+## Build your own
+
+Two ways into the sampler, both documented for application developers:
+
+- **MIDI** reaches the running machine: play notes, move parameters with
+  CCs, press panel keys, and read or write RAM with the stock Akai SysEx
+  service ops (PEEK 0E, POKE 0C, CALL 0D). Guide with the exact frame,
+  encoding, checksum, timing, a standalone `mido` example, key-press
+  simulation, an address table and a safety section:
+  **[docs/MIDI.md](docs/MIDI.md)**. Reference client:
+  [tools/s950live.py](tools/s950live.py).
+- **HTTP** reaches the disk the sampler polls: upload a WAV as a sample,
+  build a program, load it into RAM, list what is resident, download,
+  delete. Reference: **[docs/API.md](docs/API.md)**; stdlib-only client:
+  [tools/s950api.py](tools/s950api.py).
 
 ## The drop box is a file format plus a mailbox convention
 
@@ -53,22 +89,18 @@ firmware; that is its own repo, and its UDP protocol client is
    mailbox holds ONE request. `do_program` in `web/server.py` serialises for
    this reason; `do_sample` does not.
 
-## Requires
-
-Python 3, stdlib only. SuperOS 5.0 on the sampler for the drop-box poller
-(separate release channel; no firmware or ROM ships here).
-
 ## Check
 
     python3 selftest.py
 
 Blank image, deposit a sample and a program, read both back, check the
-mailbox. No hardware.
+mailbox, check the MIDI frame codec, import the server. No hardware.
 
 ## Provenance
 
 The encoders in `tools/` (`build_hdimage.py`, `build_sounddisk.py`,
-`s950dropbox.py`, `s950wifi.py`, `s950api.py`) are copied from the S950 OS
+`s950dropbox.py`, `s950wifi.py`, `s950api.py`, `s950live.py`,
+`s950mirror.py`, `s950card.py`) and `web/` are copied from the S950 OS
 repo, which stays upstream for them: fix a format bug there too.
 `tools/zulu_udp.py` is shared verbatim with the ZuluSCSI firmware repo and
 the S1000 web editor; that firmware repo is its canonical copy.
