@@ -89,7 +89,16 @@ async function refresh() {
       ? `${st.pending_ranges} ranges / ${st.pending_bytes} B`
       : '0';
     el('btnPush').disabled = !st.pending_bytes || S.busy;
-    el('btnVerify').disabled = !st.board || S.busy;
+    el('btnVerify').disabled = !st.board || S.busy || st.mode === 'usb';
+    S.mode = st.mode;
+    stepState(1, st.board ? 'ok' : 'bad', st.mode === 'usb'
+      ? `USB-C: writing into the card at ${st.card}`
+      : st.board ? `Wi-Fi: board ${st.host} answers (${st.ping_ms} ms)`
+        : `Wi-Fi: no board at ${st.host}`);
+    if (st.ready === null || st.ready === undefined) {
+      if (!S.modeChecked) stepState(2, '', 'not checked yet');
+    }
+    gateLoads();
     el('diskHint').textContent =
       `volume ${st.volume} · ${st.files.length} files · `
       + `${st.free_blocks} free blocks of ${st.total_blocks}`;
@@ -114,6 +123,7 @@ async function refresh() {
 }
 
 function renderDisk(files) {
+  setTimeout(gateLoads, 0);
   const tb = el('diskTbl').querySelector('tbody');
   tb.textContent = '';
   for (const f of files) {
@@ -252,6 +262,7 @@ function wavBytes(pcm, rate) {
 /* ---- queue ------------------------------------------------------------ */
 
 function renderQueue() {
+  setTimeout(gateLoads, 0);
   const tb = el('queueTbl').querySelector('tbody');
   tb.textContent = '';
   for (const item of S.queue) {
@@ -383,7 +394,8 @@ async function sendOne(item) {
       + `${r.planned_bytes} B planned, ${r.pushed_bytes} B pushed in `
       + `${dt.toFixed(1)} s${rate}`
       + (r.loaded === false
-        ? ' \u2014 stored on the card, not loaded'
+        ? (S.mode === 'usb' ? ' \u2014 stored on the card; the S950 loads it after Eject'
+                           : ' \u2014 stored on the card, not loaded')
         : ' \u2014 announced, the S950 loads it at its next poll'));
     state(`${item.name} sent`, '');
   } catch (e) {
@@ -1048,8 +1060,345 @@ function init() {
     for (const q of S.queue) if (q.state !== 'done') q.mode = el('selMode').value;
     renderQueue();
   };
+  wireConnection();
   refresh();
+  findDevices().then(() => { if (S.mode !== 'usb') checkMode(3); });
   setInterval(() => { if (!S.busy) refresh(); }, 5000);
+}
+
+// ---- connection, sampler mode, and the load gate -------------------------
+// Everything below exists so the page can say, in words, why a load
+// would not work BEFORE the user finds out by silence: which device the
+// editor talks to, whether the sampler is actually polling the drop box,
+// and what to press if it is not.
+
+function stepState(n, cls, text) {
+  const d = el('step' + n);
+  d.className = 'step' + (cls ? ' ' + cls : '');
+  el('step' + n + 'd').textContent = text;
+}
+
+function gateLoads() {
+  // Send/Load are only offered when they would do something.  Over
+  // USB-C the sampler cannot poll, so 'Load into S950 RAM' is switched
+  // off and the files are stored on the card; over Wi-Fi a load needs
+  // the sampler to have answered a probe.
+  const usb = S.mode === 'usb';
+  const load = el('chkLoad');
+  if (usb && load.checked) { load.checked = false; }
+  load.disabled = usb;
+  const ready = usb ? true : !!S.ready;
+  const hint = el('sendHint');
+  if (usb) hint.textContent = 'USB-C: files are written to the card; the sampler loads them after Eject.';
+  else if (!S.modeChecked) hint.textContent = 'Check the sampler (step 2) before sending.';
+  else if (!S.ready) hint.textContent = 'Sampler is not in drop-box mode: untick "Load into S950 RAM" to store on the card only, or fix step 2.';
+  else hint.textContent = '';
+  const queued = (S.queue || []).some((q) => q.state !== 'done');
+  el('btnSendAll').disabled = S.busy || !queued || (load.checked && !ready);
+  el('btnLoadSel').disabled = S.busy || !ready || usb || !document.querySelector('#diskTbl input[type=checkbox]:checked');
+  el('btnModeEnter').disabled = usb || S.busy;
+  el('btnEject').disabled = !usb || S.busy;
+  el('btnVerify').disabled = usb || S.busy || !(S.status && S.status.board);
+  el('wifiSetup').hidden = !usb;
+}
+
+async function findDevices() {
+  try {
+    const host = (el('wifiHost').value || '').trim();
+    const d = await api('/api/devices' + (host ? '?host=' + encodeURIComponent(host) : ''));
+    S.devices = d;
+    if (!el('wifiHost').value) el('wifiHost').value = d.wifi.host;
+    el('wifiState').textContent = d.wifi.reachable
+      ? `board answers, ${d.wifi.ping_ms} ms, serving ${d.wifi.image_name || '?'}`
+      : 'no board at this address';
+    const sel = el('usbCard');
+    sel.textContent = '';
+    if (!d.usb.cards.length) {
+      const o = document.createElement('option');
+      o.value = ''; o.textContent = '(no ZuluSCSI card mounted)';
+      sel.appendChild(o);
+      el('usbState').textContent = d.usb.boards.length
+        ? `${d.usb.boards.length} ZuluSCSI console(s) on USB, but no card mounted yet`
+        : 'plug the board into this Mac with USB-C';
+    } else {
+      for (const c of d.usb.cards) {
+        const o = document.createElement('option');
+        o.value = c.volume;
+        o.textContent = `${c.name}${c.has_image ? '' : ' (no S950 image)'}${c.ssid ? ' · Wi-Fi ' + c.ssid : ''}`;
+        sel.appendChild(o);
+      }
+      el('usbState').textContent = `${d.usb.cards.length} card(s) mounted`;
+    }
+    if (d.current.card) sel.value = d.current.card;
+    el('connWifi').checked = d.current.mode !== 'usb';
+    el('connUsb').checked = d.current.mode === 'usb';
+    S.mode = d.current.mode;
+    el('connHint').textContent = d.current.mode === 'usb'
+      ? `Connected over USB-C. Writing into ${d.current.image}. The sampler cannot see the card until you press Eject.`
+      : d.wifi.reachable
+        ? `Connected over Wi-Fi to ${d.current.host}. The sampler stays on the bus; loads happen at its next idle poll.`
+        : `No board answers at ${d.current.host}. Check the board is powered, joined to this Wi-Fi network, and that the address is right (zuluscsi.ini LoaderIP), or plug it in over USB-C.`;
+    gateLoads();
+    if (d.current.mode === 'usb') loadWifi();
+  } catch (e) {
+    err('devices: ' + e.message);
+  }
+}
+
+async function connectWifi() {
+  const host = (el('wifiHost').value || '').trim();
+  S.busy = true;
+  state('connecting over Wi-Fi…', 'busy');
+  try {
+    await api('/api/connect?mode=wifi&host=' + encodeURIComponent(host), { method: 'POST' });
+    log(`connected over Wi-Fi to ${host}`);
+    state('connected', '');
+    S.modeChecked = false; S.ready = null;
+  } catch (e) {
+    err(e.message);
+    state('not connected', 'error');
+  } finally {
+    S.busy = false;
+    await findDevices();
+    await refresh();
+    if (S.mode !== 'usb') checkMode(3);
+  }
+}
+
+async function connectUsb() {
+  const vol = el('usbCard').value;
+  if (!vol) return err('no card selected: plug the board in over USB-C and press Find devices');
+  S.busy = true;
+  state('switching to the card…', 'busy');
+  try {
+    await api('/api/connect?mode=usb&volume=' + encodeURIComponent(vol), { method: 'POST' });
+    log(`connected over USB-C: ${vol}`);
+    state('connected to the card', '');
+    S.modeChecked = true; S.ready = false;
+    stepState(2, 'bad', 'over USB-C the sampler cannot load; files go to the card until Eject');
+  } catch (e) {
+    err(e.message);
+    state('not connected', 'error');
+  } finally {
+    S.busy = false;
+    await findDevices();
+    await refresh();
+  }
+}
+
+async function mountCard() {
+  const ok = await ask('Mount the card?',
+    'The ZuluSCSI is told over USB to show its card as a disk. It leaves the '
+    + 'sampler\'s SCSI bus while the card is mounted, so the S950 has no disk '
+    + 'until you press Eject. Takes up to a minute.', 'Mount');
+  if (!ok) return;
+  S.busy = true;
+  state('mounting the card…', 'busy');
+  try {
+    const d = await api('/api/mount', { method: 'POST' });
+    log(`card mounted and in use: ${d.current.image}`);
+    state('connected to the card', '');
+    S.modeChecked = true; S.ready = false;
+    stepState(2, 'bad', 'over USB-C the sampler cannot load; files go to the card until Eject');
+  } catch (e) {
+    err(e.message);
+    state('mount failed', 'error');
+  } finally {
+    S.busy = false;
+    await findDevices();
+    await refresh();
+  }
+}
+
+async function ejectCard() {
+  const ok = await ask('Eject the card?',
+    'The USB disk is ejected and the ZuluSCSI reboots onto the sampler\'s SCSI bus. '
+    + 'It joins Wi-Fi with the network saved on the card. Anything you announced '
+    + 'loads at the sampler\'s first idle poll. The editor switches back to Wi-Fi.', 'Eject');
+  if (!ok) return;
+  S.busy = true;
+  state('ejecting…', 'busy');
+  try {
+    const r = await api('/api/eject', { method: 'POST' });
+    log(`ejected ${r.ejected}: ${r.next}`);
+    state('card handed back', '');
+    S.modeChecked = false; S.ready = null;
+  } catch (e) {
+    err(e.message);
+    state('eject failed', 'error');
+  } finally {
+    S.busy = false;
+    await findDevices();
+    await refresh();
+  }
+}
+
+async function loadWifi() {
+  try {
+    const w = await api('/api/wifi');
+    const sel = el('wifiKnown');
+    sel.textContent = '';
+    const o0 = document.createElement('option');
+    o0.value = ''; o0.textContent = '(type a name)';
+    sel.appendChild(o0);
+    for (const n of w.known) {
+      const o = document.createElement('option');
+      o.value = o.textContent = n + (n === w.mac_current ? ' (this Mac is on it)' : '');
+      o.value = n;
+      sel.appendChild(o);
+    }
+    el('wifiCardNow').textContent = w.card
+      ? `card now: ${w.card.ssid || '(no network set)'}${w.card.has_password ? '' : ', no password'}${w.card.loader_ip ? ', loader IP ' + w.card.loader_ip : ''}`
+      : '';
+    if (w.card && w.card.ssid && !el('wifiSsid').value) el('wifiSsid').value = w.card.ssid;
+  } catch (e) {
+    err('wifi: ' + e.message);
+  }
+}
+
+async function saveWifi() {
+  const ssid = (el('wifiSsid').value || '').trim();
+  const pw = el('wifiPw').value || '';
+  if (!ssid) return err('type or pick the network name first');
+  S.busy = true;
+  state('writing zuluscsi.ini…', 'busy');
+  try {
+    const q = new URLSearchParams({ ssid, password: pw });
+    await api('/api/wifi?' + q.toString(), { method: 'POST' });
+    el('wifiPw').value = '';
+    log(`card Wi-Fi set to ${ssid}; the board joins it after Eject`);
+    state('saved to card', '');
+    await loadWifi();
+  } catch (e) {
+    err(e.message);
+    state('not saved', 'error');
+  } finally {
+    S.busy = false;
+  }
+}
+
+async function checkMode(timeout) {
+  el('modeDot').className = 'dot busy';
+  el('modeText').textContent = 'asking the sampler… (up to ' + (timeout || 4) + ' s)';
+  stepState(2, '', 'checking…');
+  try {
+    const q = new URLSearchParams({ timeout: String(timeout || 4), port: el('midiPort').value });
+    const m = await api('/api/mode?' + q.toString());
+    S.modeChecked = true;
+    S.ready = m.polling;
+    el('modeDot').className = 'dot' + (m.polling ? ' on' : ' err');
+    el('modeText').textContent = m.reason + (m.section ? ` [panel: ${m.section}]` : '');
+    stepState(2, m.polling ? 'ok' : 'bad', m.polling
+      ? `ready: the sampler answered in ${m.seconds} s`
+      : m.mode === 'usb' ? 'waiting for Eject' : 'not polling: ' + m.reason);
+    log(m.polling ? 'sampler is in drop-box mode' : 'sampler is NOT in drop-box mode: ' + m.reason, m.polling ? '' : 'err');
+  } catch (e) {
+    S.modeChecked = true; S.ready = false;
+    el('modeDot').className = 'dot err';
+    el('modeText').textContent = e.message;
+    stepState(2, 'bad', e.message);
+  } finally {
+    gateLoads();
+  }
+}
+
+async function enterMode() {
+  S.busy = true;
+  el('modeDot').className = 'dot busy';
+  el('modeText').textContent = 'pressing EDIT SAMPLE over MIDI…';
+  try {
+    const q = new URLSearchParams({ port: el('midiPort').value, timeout: '4' });
+    const m = await api('/api/mode/enter?' + q.toString(), { method: 'POST' });
+    S.modeChecked = true; S.ready = m.polling;
+    el('modeDot').className = 'dot' + (m.polling ? ' on' : ' err');
+    el('modeText').textContent = m.reason + (m.section ? ` [panel: ${m.section}]` : '');
+    stepState(2, m.polling ? 'ok' : 'bad', m.polling ? 'ready' : 'still not polling: ' + m.reason);
+    log(m.polling ? 'sampler put in drop-box mode' : 'could not: ' + m.reason, m.polling ? '' : 'err');
+  } catch (e) {
+    S.ready = false; S.modeChecked = true;
+    el('modeDot').className = 'dot err';
+    el('modeText').textContent = e.message;
+    stepState(2, 'bad', e.message);
+    err(e.message);
+  } finally {
+    S.busy = false;
+    gateLoads();
+  }
+}
+
+function wireConnection() {
+  el('btnDevices').onclick = findDevices;
+  el('btnConnectWifi').onclick = connectWifi;
+  el('btnConnectUsb').onclick = connectUsb;
+  el('btnMount').onclick = mountCard;
+  el('btnEject').onclick = ejectCard;
+  el('btnWifiSave').onclick = saveWifi;
+  el('wifiKnown').onchange = () => { if (el('wifiKnown').value) el('wifiSsid').value = el('wifiKnown').value; };
+  el('btnModeCheck').onclick = () => checkMode(4);
+  el('btnModeEnter').onclick = enterMode;
+  el('chkLoad').onchange = gateLoads;
+  el('connWifi').onchange = el('connUsb').onchange = () => {
+    el('wifiSetup').hidden = !el('connUsb').checked;
+  };
+}
+
+// ---- the machine mirror -------------------------------------------------
+// The S950's LCD and section lamps are RAM, so the SysEx service ops can
+// read them: this shows the sampler's own glass without touching the
+// board or the drop box.  It is also the quickest way to see WHY a
+// deposit has not appeared - the machine may be on the DISK page, on an
+// error banner, or in no section at all.
+const MIR = { timer: null };
+
+function lampRow(states) {
+  return states.map((l) => `<span class="lamp${l.lit ? ' on' : ''}">${l.name}</span>`)
+    .join('');
+}
+
+function voiceRow(v) {
+  const w = v.window;
+  return `voice ${v.voice} ${v.sounding ? 'SOUNDING' : 'idle    '}`
+    + ` flags 0x${v.flags.toString(16).padStart(2, '0')}`
+    + (w ? `  window 0x${w.addr.toString(16).padStart(6, '0')}`
+         + ` count ${String(w.count).padStart(5)}`
+         + (w.private ? ' private' : '') + (w.parked ? ' parked' : '')
+       : '');
+}
+
+async function mirrorTick() {
+  try {
+    const p = await api('/api/panel?port='
+      + encodeURIComponent(el('mirPort').value));
+    el('lcd1').textContent = p.lcd[0];
+    el('lcd2').textContent = p.lcd[1];
+    el('lamps').innerHTML = lampRow(p.lamp_state || []);
+    el('mirSection').textContent = 'section: ' + p.section;
+    const busy = (p.voices || []).filter((v) => v.sounding || v.node);
+    const kgs = (p.keygroups || []).map((k) =>
+      `kg 0x${k.addr.toString(16)} ${k.sample || '(unnamed)'} ch${k.midi_ch}`
+      + `  morph depth ${k.depth} End ${k.end}${k.end_stored ? '' : ' (not stored)'}`);
+    el('mirVoices').innerHTML = kgs.concat(busy.map(voiceRow))
+      .map((t) => `<div>${t}</div>`).join('') || '<div>no voice sounding</div>';
+  } catch (e) {
+    stopMirror();
+    err('mirror: ' + e.message);
+  }
+}
+
+function stopMirror() {
+  if (MIR.timer) clearInterval(MIR.timer);
+  MIR.timer = null;
+  if (el('btnMirror')) el('btnMirror').textContent = 'Start mirror';
+}
+
+function wireMirror() {
+  if (!el('btnMirror')) return;          // the machine window is not on the page
+  el('btnMirror').onclick = () => {
+    if (MIR.timer) return stopMirror();
+    el('btnMirror').textContent = 'Stop mirror';
+    mirrorTick();
+    MIR.timer = setInterval(mirrorTick, 1000);
+  };
 }
 
 init();

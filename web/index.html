@@ -10,7 +10,7 @@
   <div class="app">
     <div class="header">
       <div class="logo">S950</div>
-      <div class="logo-sub">Akai S950 &middot; SuperOS 4.0.3 &middot; Wi-Fi drop-box</div>
+      <div class="logo-sub">Akai S950 &middot; SuperOS 5.0 &middot; drop-box editor</div>
     </div>
 
     <div class="banner" id="errBanner"></div>
@@ -55,9 +55,71 @@
       <button id="btnVerify" title="Read the whole served image back and compare it with the local mirror">Verify card</button>
     </div>
 
+    <!-- Steps: the three things that have to be true, in order -->
+    <div class="steps" id="steps">
+      <div class="step" id="step1"><span class="n">1</span><span class="s">Connect to the ZuluSCSI</span><span class="d" id="step1d">choose Wi-Fi or USB-C below</span></div>
+      <div class="step" id="step2"><span class="n">2</span><span class="s">Sampler in drop-box mode</span><span class="d" id="step2d">not checked yet</span></div>
+      <div class="step" id="step3"><span class="n">3</span><span class="s">Import audio</span><span class="d" id="step3d">drop files, name them, send</span></div>
+    </div>
+
+    <!-- Connection -->
+    <div class="panel">
+      <div class="panel-title">1 &middot; Connection
+        <span class="phint">The ZuluSCSI in the S950 is reached one of two ways. Over Wi-Fi it stays on the sampler's SCSI bus and loads happen live. Over USB-C it leaves the bus and shows its card as a disk: files go straight onto the card and the sampler sees them after you eject.</span>
+        <button class="panel-close" id="btnDevices" title="Look again for boards on Wi-Fi and cards on USB">&#8635; Find devices</button>
+      </div>
+      <div class="panel-body">
+        <div class="strip strip-inner">
+          <label class="radio"><input type="radio" name="conn" id="connWifi" value="wifi" checked /> Wi-Fi</label>
+          <span class="label">Board IP</span>
+          <input type="text" id="wifiHost" class="mono" style="width:11em" placeholder="192.168.1.250" />
+          <span class="mono" id="wifiState">&mdash;</span>
+          <button id="btnConnectWifi" class="primary">Connect over Wi-Fi</button>
+        </div>
+        <div class="strip strip-inner">
+          <label class="radio"><input type="radio" name="conn" id="connUsb" value="usb" /> USB-C</label>
+          <span class="label">Card</span>
+          <select id="usbCard"><option value="">(no ZuluSCSI card mounted)</option></select>
+          <span class="mono" id="usbState">&mdash;</span>
+          <button id="btnMount" title="Tell the ZuluSCSI over its USB console to show its card as a disk (card-reader mode). The board leaves the sampler's SCSI bus until you Eject.">Mount card</button>
+          <button id="btnConnectUsb" class="primary">Use this card</button>
+          <button id="btnEject" title="Eject the card so the board reboots onto the sampler's SCSI bus. Do this when you are done writing over USB-C.">Eject &amp; hand back to sampler</button>
+        </div>
+        <div class="hintline" id="connHint">Not connected yet.</div>
+        <div class="strip strip-inner" id="wifiSetup">
+          <span class="label" title="Which Wi-Fi network the ZuluSCSI joins. It is stored in zuluscsi.ini on the card, so this needs the card mounted over USB-C. The board reads it when it boots, i.e. after Eject.">Board joins network</span>
+          <select id="wifiKnown"><option value="">(type a name)</option></select>
+          <input type="text" id="wifiSsid" placeholder="network name" style="width:12em" />
+          <input type="password" id="wifiPw" placeholder="password (blank = keep)" style="width:12em" autocomplete="off" />
+          <button id="btnWifiSave">Save to card</button>
+          <span class="mono" id="wifiCardNow"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sampler mode -->
+    <div class="panel">
+      <div class="panel-title">2 &middot; Sampler
+        <span class="phint">Drop-box mode means the S950 is idle and polling the mailbox about once a second. It does that in any section except DISK and RECORD, with no note sounding and no error banner on the glass. Nothing loads until this light is green.</span>
+        <button class="panel-close" id="btnModeCheck" title="Write a command into the mailbox and see whether the sampler answers. Takes up to 4 seconds.">Check now</button>
+      </div>
+      <div class="panel-body">
+        <div class="strip strip-inner">
+          <span class="dot" id="modeDot"></span>
+          <span class="label">Drop-box mode</span>
+          <span id="modeText" class="modetext">not checked yet</span>
+          <span class="spacer"></span>
+          <span class="label" title="The MIDI port the S950 is on, for pressing EDIT SAMPLE from here and reading which page it shows.">MIDI</span>
+          <input id="midiPort" class="mono" value="UX16 2" style="width:7em" />
+          <button id="btnModeEnter" title="Press EDIT SAMPLE on the sampler over MIDI, which leaves the DISK or RECORD page, then check again.">Put sampler in drop-box mode</button>
+        </div>
+        <div class="hintline">On the panel: press <b>EDIT SAMPLE</b> or <b>PLAY</b> to leave the DISK/RECORD pages, let any note finish, and clear any error banner. Then Check now.</div>
+      </div>
+    </div>
+
     <!-- Import -->
     <div class="panel">
-      <div class="panel-title">Import audio
+      <div class="panel-title">3 &middot; Import audio
         <span class="phint">WAV, AIFF, MP3, FLAC, anything the browser decodes. Mono-summed, resampled to the chosen rate, 16-bit.</span>
       </div>
       <div class="panel-body">
@@ -92,6 +154,7 @@
           <input type="number" id="smpLoud" min="0" max="99" placeholder="50" style="width:4.5em" />
           <span class="spacer"></span>
           <span class="mono" id="rateNote">12-bit</span>
+          <span class="hintline" id="sendHint"></span>
           <button id="btnSendAll" class="primary" disabled>Send all</button>
           <button id="btnClear" disabled>Clear queue</button>
         </div>
@@ -190,7 +253,7 @@
     <footer>
       Each file is encoded to the S950's own disk format and written into a local mirror of the card image, then only the changed byte
       ranges go to the ZuluSCSI over Wi-Fi (UDP 5150) and into the image it is serving. The announcement in mailbox block 3 is written
-      last, so a transfer that dies never points the sampler at blocks that are not there yet. SuperOS 4.0.3 polls that mailbox about
+      last, so a transfer that dies never points the sampler at blocks that are not there yet. SuperOS 5.0 polls that mailbox about
       once a second while the sampler is idle and hands the file to the stock loader: the sample appears in memory, named, with no DISK
       page and no disk image to build. The sampler stays on the bus throughout.
     </footer>

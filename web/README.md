@@ -1,8 +1,34 @@
 # S950 sample loader
 
 Browser page that converts audio to Akai S950 samples and pushes them
-straight into the sampler's RAM over Wi-Fi, with no DISK page, no disk image
-to build and no card to mount.
+straight into the sampler's RAM over Wi-Fi, or onto the ZuluSCSI's card
+over USB-C, with no DISK page and no disk image to build.
+
+The page is three steps, top to bottom:
+
+1. **Connection.** *Find devices* looks for the board on Wi-Fi and for
+   ZuluSCSI cards and consoles on USB. Wi-Fi: the board's IP (from
+   zuluscsi.ini `LoaderIP`); the board stays on the sampler's SCSI bus and
+   loads happen live. USB-C: plug the board into the computer, press
+   *Mount card* (the board is told over its USB console to show the card as
+   a disk and leaves the bus), write files with *Save to card*, then
+   *Eject & hand back* (the board reboots onto the bus). The card's Wi-Fi
+   network (`WiFiSSID`/`WiFiPassword` in zuluscsi.ini) is set here too,
+   while the card is mounted; the board joins it after Eject. USB-C mode
+   uses macOS tools (`/Volumes`, `diskutil`, `networksetup`) and needs
+   `pyserial` for the console.
+2. **Sampler.** *Check now* writes a command into the mailbox and waits
+   for the S950 to answer; only an answer proves it is in drop-box mode
+   (idle, not on the DISK or RECORD page, no note sounding, no error
+   banner). *Put sampler in drop-box mode* presses EDIT SAMPLE over the
+   MIDI service ops if a MIDI interface is connected (`mido` +
+   `python-rtmidi`). Nothing loads until this light is green: Send/Load
+   are gated on it, and the server refuses a load with the reason rather
+   than writing an announcement the machine would never act on.
+3. **Import audio.** Drop files, name them, send.
+
+The live machine mirror (LCD and lamps over MIDI) is not on the page; the
+code (`/api/panel`, `tools/s950mirror.py`) stays for scripts.
 
 ```bash
 python3 web/server.py          # http://localhost:8150
@@ -33,8 +59,9 @@ bus throughout.
   its own.
 - The ZuluSCSI running the SuperOS loader firmware
   (the separate ZuluSCSI repo), joined to Wi-Fi, with `S950/HD00_512.hda`
-  on the card. Copy it there over USB, or build a blank one with
-  `python3 tools/s950dropbox.py new`.
+  on the card. Build a blank one with `python3 tools/s950dropbox.py new`
+  and put it there with `python3 tools/s950card.py install` (one USB
+  session).
 
   None of this is needed to try the encoders offline: `--local` writes to
   the image file directly, and `python3 selftest.py` exercises the whole

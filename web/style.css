@@ -156,3 +156,30 @@ input[type="range"]::-moz-range-thumb { width: 11px; height: 15px; border-radius
 .kg-field input, .kg-field select { width: 5.2em; }
 .kg-field input[type="text"] { width: 8em; }
 .hintline { font-size: 10px; color: var(--gray-4, #555); margin-top: 4px; }
+
+/* The machine mirror: the S950's glass is 40x2 green-on-dark characters,
+   and the section lamps sit in the panel's own left-to-right order,
+   which is NOT the port-0x64 bit order. */
+.lcd { background:#10241a; border:1px solid #2c4a38; border-radius:4px;
+       padding:.6em .8em; margin:.6em 0; display:inline-block; }
+.lcd-line { font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+            font-size:15px; letter-spacing:.09em; color:#7df0a8;
+            white-space:pre; line-height:1.5; text-shadow:0 0 6px #1d7a44; }
+.lamps { display:flex; gap:.45em; flex-wrap:wrap; margin:.3em 0 .5em; }
+.lamp { font-size:10px; letter-spacing:.04em; padding:.25em .5em;
+        border:1px solid var(--line,#444); border-radius:3px; opacity:.4; }
+.lamp.on { opacity:1; background:#c0392b22; border-color:#c0392b;
+           color:#e06050; box-shadow:0 0 6px #c0392b55; }
+
+/* the three steps, and the plain-words state of each */
+.steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 8px; }
+.step { border: var(--rule-sm); padding: 8px 10px; display: grid; grid-template-columns: 22px 1fr; gap: 2px 8px; align-items: baseline; background: var(--gray-1); }
+.step .n { grid-row: 1 / span 2; font-size: 18px; font-weight: 900; }
+.step .s { font-size: 10px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; }
+.step .d { font-size: 11px; color: var(--gray-4); }
+.step.ok { background: #eaf6ee; border-color: var(--green); }
+.step.bad { background: #fdecec; border-color: var(--red); }
+.radio { font-size: 11px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; display: flex; align-items: center; gap: 6px; }
+.modetext { font-size: 12px; }
+#wifiSetup[hidden] { display: none; }
+@media (max-width: 720px) { .steps { grid-template-columns: 1fr; } }

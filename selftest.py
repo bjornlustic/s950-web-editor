@@ -41,6 +41,15 @@ def main():
 
     print('ok: image built, 2 files deposited, mailbox announces SELFPRG (serial 2)')
 
+    import s950live
+    s950live._frame_check()
+
+    # the editor's server and the modules it pulls in still import
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'web'))
+    import server                                   # noqa: F401
+    import s950mirror                               # noqa: F401
+    print('ok: web/server.py and its tools import')
+
 
 if __name__ == '__main__':
     main()

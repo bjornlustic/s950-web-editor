@@ -66,6 +66,7 @@ import json
 import os
 import struct
 import sys
+import subprocess
 import tempfile
 import threading
 import time
@@ -86,13 +87,16 @@ MIME = {'.html': 'text/html', '.js': 'text/javascript',
 
 
 class State:
-    def __init__(self, image, host, sid, local=False):
+    def __init__(self, image, host, sid, local=False, mode='wifi', card=None):
         self.image = image
         self.host = host
         self.id = sid
         self.local = local
+        self.mode = mode            # 'wifi' (board over UDP) or 'usb'
+        self.card = card            # the mounted card's volume in usb mode
         self.lock = threading.Lock()
         self.log = []
+        self.ready = None           # last drop-box mode probe (see do_mode)
 
     def note(self, line):
         self.log.append(f'[{time.strftime("%H:%M:%S")}] {line}')
@@ -105,7 +109,7 @@ class State:
 
 S = None
 TOKEN = None                    # set by main(); None = no auth
-OS_VERSION = '4.0.3'
+OS_VERSION = '5.0.0'
 
 
 def do_version():
@@ -163,6 +167,7 @@ def status():
         # which once cost a whole hardware session: every deposit went into
         # a local file while the status looked healthy.  Say so outright.
         'local': S.local,
+        'mode': S.mode, 'card': S.card, 'ready': S.ready,
         'image': os.path.basename(S.image), 'image_name': name,
         'volume': box.DEF_VOL.decode().rstrip(),
         'mailbox': {
@@ -260,6 +265,8 @@ def do_sample(query, body):
         raise ValueError(f'bad mode {mode!r}')
     if len(body) < 45 or body[:4] != b'RIFF':
         raise ValueError('body is not a WAV')
+    if want_load:
+        require_dropbox()
     with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
         f.write(body)
         tmp = f.name
@@ -291,6 +298,7 @@ def do_announce(query):
     ftype = query.get('type', ['S'])[0]
     if not name:
         raise ValueError('name required')
+    require_dropbox()
 
     def bump(d):
         serial = (box.mailbox(d)['serial'] + 1) & 0xFFFF or 1
@@ -448,6 +456,7 @@ def do_program(query, body=b''):
     # first when it is missing.
     sample_loaded = False
     if want_load:
+        require_dropbox()
         st = W.refresh_state(S.image, S.host, S.id, loader=card())
         need = sorted({k['sample'] for k in kgs}
                       | {k.get('sample_loud') for k in kgs} - {None}) \
@@ -495,6 +504,7 @@ def do_load(query):
     ftype = query.get('type', ['S'])[0]
     if not name:
         raise ValueError('name required')
+    require_dropbox()
     t = time.time()
     st = W.load_resident(S.image, name, ftype, S.host, S.id,
                          loader=card())
@@ -557,6 +567,410 @@ def do_verify():
     bad = W.verify(S.image, S.host, S.id)
     return {'differing': bad, 'bytes': os.path.getsize(S.image),
             'seconds': time.time() - t}
+
+
+_MIRROR = {'tp': None, 'port': None}
+
+
+def do_panel(q):
+    """Mirror the machine's front panel, live, over the MIDI service ops.
+
+    The LCD and the section lamps are just RAM, so a browser can show
+    what the sampler is showing with nothing attached but a MIDI cable -
+    and, unlike everything else in this editor, it needs neither the
+    board nor the drop box.  Useful on its own, and useful when a deposit
+    does not appear: the panel says whether the machine is on the DISK
+    page, sitting on an error banner, or in no section at all.
+
+    READ ONLY.  s950live.press() is the way to drive it.
+    """
+    import s950mirror
+    import s950live
+    port = q.get('port', ['UX16 2'])[0]
+    if _MIRROR['tp'] is None or _MIRROR['port'] != port:
+        _MIRROR['tp'] = midi_tp(port)                  # keep the port open
+        _MIRROR['port'] = port
+    try:
+        return s950mirror.panel(_MIRROR['tp'], int(q.get('ch', ['0'])[0], 0),
+                                voices=q.get('voices', ['1'])[0] != '0')
+    except RuntimeError as e:
+        _MIRROR['tp'] = None
+        raise ValueError(str(e))
+
+
+# ---------------------------------------------------------------------------
+# Connection: which device the editor talks to, and how.
+#
+#   wifi  the ZuluSCSI serves the image to the sampler and takes our writes
+#         over UDP 5150.  The sampler stays on the bus; deposits load at its
+#         next idle poll.
+#   usb   the board is plugged into this Mac over USB-C.  It leaves the SCSI
+#         bus and mounts its card as a disk, so the editor writes straight
+#         into the image file on the card.  The sampler cannot see the card
+#         until the card is EJECTED, which reboots the board back onto the
+#         bus; anything announced meanwhile loads at the first poll after.
+# ---------------------------------------------------------------------------
+import s950card as card_tool                                    # noqa: E402
+
+IMAGE_DIR, IMAGE_NAME = 'S950', 'HD00_512.hda'
+
+
+def ini_get(path, key):
+    try:
+        for line in open(path, errors='replace'):
+            m = __import__('re').match(r'^\s*' + key + r'\s*=\s*"?([^"\r\n]*)"?', line)
+            if m:
+                return m.group(1)
+    except OSError:
+        pass
+    return ''
+
+
+def usb_cards():
+    """Every mounted ZuluSCSI card (a volume with a zuluscsi.ini)."""
+    out = []
+    try:
+        names = os.listdir('/Volumes')
+    except OSError:
+        names = []
+    for name in names:
+        vol = os.path.join('/Volumes', name)
+        ini = os.path.join(vol, card_tool.INI)
+        if not os.path.exists(ini):
+            continue
+        img = os.path.join(vol, IMAGE_DIR, IMAGE_NAME)
+        out.append({'volume': vol, 'name': name, 'image': img,
+                    'has_image': os.path.exists(img),
+                    'ssid': ini_get(ini, 'WiFiSSID'),
+                    'loader_ip': ini_get(ini, 'LoaderIP')})
+    return out
+
+
+def usb_boards():
+    """ZuluSCSI consoles on USB, by product name (never by position)."""
+    try:
+        return [{'port': p, 'product': n, 'serial': sn}
+                for p, n, sn in card_tool._usb_serial_ports() if 'ZuluSCSI' in n]
+    except Exception:                                         # noqa: BLE001
+        return []
+
+
+def do_devices(q):
+    host = q.get('host', [S.host])[0]
+    ok, ping, name = (False, None, '')
+    try:
+        z = W._loader(host, timeout=0.8)
+        ping = round(z.ping() * 1000)
+        ok = True
+        try:
+            name = z.info(S.id).get('filename', '')
+        except Exception as e:                               # noqa: BLE001
+            name = f'no image at id {S.id} ({e})'
+    except Exception:                                         # noqa: BLE001
+        pass
+    return {'current': {'mode': S.mode, 'host': S.host, 'id': S.id,
+                        'image': S.image, 'card': S.card, 'local': S.local},
+            'wifi': {'host': host, 'reachable': ok, 'ping_ms': ping,
+                     'image_name': name},
+            'usb': {'cards': usb_cards(), 'boards': usb_boards()}}
+
+
+def do_connect(q):
+    """Switch the editor to a device.  mode=wifi&host=..[&id=..] or
+    mode=usb&volume=/Volumes/NAME."""
+    mode = q.get('mode', [''])[0]
+    if mode == 'wifi':
+        host = q.get('host', [S.host])[0].strip()
+        sid = int(q.get('id', [S.id])[0])
+        try:
+            ipaddress.ip_address(host)
+        except ValueError:
+            raise ValueError(f'{host!r} is not an IP address')
+        z = W._loader(host, timeout=1.5)
+        try:
+            ping = round(z.ping() * 1000)
+        except Exception as e:                               # noqa: BLE001
+            raise ValueError(f'no ZuluSCSI answers at {host} (is the board '
+                             f'on, joined to this Wi-Fi, and running the '
+                             f'SuperOS loader firmware?): {e}')
+        mirror = q.get('image', [S.mirror_default])[0]
+        if not os.path.exists(mirror):
+            raise ValueError(f'the local mirror {mirror} does not exist')
+        S.mode, S.host, S.id, S.local, S.card, S.image = \
+            'wifi', host, sid, False, None, mirror
+        S.ready = None
+        S.note(f'connected over Wi-Fi to {host} id {sid} ({ping} ms)')
+        return do_devices({})
+    if mode == 'usb':
+        vol = q.get('volume', [''])[0]
+        cards = {c['volume']: c for c in usb_cards()}
+        if vol not in cards:
+            raise ValueError(f'{vol or "(none)"} is not a mounted ZuluSCSI '
+                             f'card; plug the board into this Mac over USB-C '
+                             f'and wait for its card to appear in Finder')
+        c = cards[vol]
+        if not c['has_image']:
+            raise ValueError(f'{vol} has no {IMAGE_DIR}/{IMAGE_NAME}; run '
+                             f'python3 tools/s950card.py install first')
+        S.mode, S.local, S.card, S.image = 'usb', True, vol, c['image']
+        S.ready = None
+        S.note(f'connected over USB-C: writing into {c["image"]} (the '
+               f'sampler sees it after Eject)')
+        return do_devices({})
+    raise ValueError('mode must be wifi or usb')
+
+
+def mac_networks():
+    """The Wi-Fi networks this Mac knows, and the one it is on.  macOS no
+    longer reveals scanned SSIDs to a script, so the preferred list is
+    what can be offered; anything else is typed."""
+    known, current = [], ''
+    try:
+        out = subprocess.run(['networksetup', '-listpreferredwirelessnetworks',
+                              'en0'], capture_output=True, text=True,
+                             timeout=5).stdout
+        known = [l.strip() for l in out.splitlines()[1:] if l.strip()]
+        cur = subprocess.run(['networksetup', '-getairportnetwork', 'en0'],
+                             capture_output=True, text=True, timeout=5).stdout
+        if ':' in cur and 'not associated' not in cur:
+            current = cur.split(':', 1)[1].strip()
+    except Exception:                                         # noqa: BLE001
+        pass
+    return known, current
+
+
+def do_wifi_get():
+    known, current = mac_networks()
+    card = None
+    if S.mode == 'usb' and S.card:
+        ini = os.path.join(S.card, card_tool.INI)
+        card = {'volume': S.card, 'ssid': ini_get(ini, 'WiFiSSID'),
+                'has_password': bool(ini_get(ini, 'WiFiPassword')),
+                'loader_ip': ini_get(ini, 'LoaderIP')}
+    return {'mac_current': current, 'known': known, 'card': card,
+            'editable': card is not None}
+
+
+def do_wifi_set(q):
+    """Write WiFiSSID / WiFiPassword into zuluscsi.ini on the mounted card.
+    The board reads them at boot, i.e. after Eject.  The password is
+    written to the card and nowhere else (not logged, not echoed)."""
+    if S.mode != 'usb' or not S.card:
+        raise ValueError('the Wi-Fi network is set on the card: connect '
+                         'over USB-C first')
+    ssid = q.get('ssid', [''])[0].strip()
+    pw = q.get('password', [''])[0]
+    if not ssid:
+        raise ValueError('network name required')
+    if any(c in ssid + pw for c in '"\r\n'):
+        raise ValueError('quotes and line breaks are not allowed')
+    ini = os.path.join(S.card, card_tool.INI)
+    text = open(ini, errors='replace').read()
+    import re
+    lines = text.splitlines()
+    out, seen = [], set()
+    for line in lines:
+        m = re.match(r'^(\s*)(WiFiSSID|WiFiPassword)\s*=', line)
+        if m:
+            key = m.group(2)
+            seen.add(key)
+            val = ssid if key == 'WiFiSSID' else pw
+            if key == 'WiFiPassword' and not pw:
+                continue                       # keep the card's password
+            out.append(f'{m.group(1)}{key} = "{val}"')
+        else:
+            out.append(line)
+    # missing keys go under [SCSI]
+    add = [k for k in ('WiFiSSID', 'WiFiPassword') if k not in seen
+           and (k == 'WiFiSSID' or pw)]
+    if add:
+        for i, line in enumerate(out):
+            if line.strip().lower() == '[scsi]':
+                for k in reversed(add):
+                    out.insert(i + 1, f'{k} = "{ssid if k == "WiFiSSID" else pw}"')
+                break
+        else:
+            out += ['[SCSI]'] + [f'{k} = "{ssid if k == "WiFiSSID" else pw}"'
+                                 for k in add]
+    bak = os.path.join(ROOT, 'build', 'zuluscsi.ini.bak')
+    try:
+        __import__('shutil').copyfile(ini, bak)
+    except OSError:
+        pass
+    open(ini, 'w').write('\n'.join(out) + '\n')
+    S.note(f'card Wi-Fi set to {ssid!r} (joins after Eject; backup in '
+           f'build/zuluscsi.ini.bak)')
+    return do_wifi_get()
+
+
+def do_mount(q):
+    """Put the ZuluSCSI into card-reader mode over its USB console (the
+    's', 'y' keys) and wait for the card to mount, then connect to it.
+    The board leaves the SCSI bus while mounted: the sampler has no disk
+    until Eject."""
+    vols = usb_cards()
+    if not vols:
+        port, board = card_tool.find_port(q.get('serial', [None])[0])
+        if not port:
+            raise ValueError('no ZuluSCSI console on USB: plug the board '
+                             'into this Mac with USB-C (the S950 can stay '
+                             'on)')
+        S.note(f'[{board}] entering card-reader mode')
+        try:
+            card_tool.console(port, 'sy', wait=0.3)
+        except Exception as e:                               # noqa: BLE001
+            raise ValueError(f'could not talk to the console at {port}: {e}')
+        deadline = time.time() + 60
+        while time.time() < deadline and not usb_cards():
+            time.sleep(1.0)
+        vols = usb_cards()
+        if not vols:
+            raise ValueError('the card did not mount within 60 s; check '
+                             'Finder, or run python3 tools/s950card.py status')
+    return do_connect({'mode': ['usb'], 'volume': [vols[0]['volume']]})
+
+
+def do_eject():
+    """Hand the card back to the sampler: eject the USB disk, wait for the
+    board to come back on the SCSI bus, and switch the editor to Wi-Fi."""
+    if S.mode != 'usb' or not S.card:
+        raise ValueError('not connected over USB-C')
+    vol = S.card
+    r = subprocess.run(['diskutil', 'eject', vol], capture_output=True,
+                       text=True)
+    if r.returncode:
+        raise ValueError(f'eject failed: {r.stderr.strip() or r.stdout.strip()}')
+    S.note(f'ejected {vol}; the board reboots onto the SCSI bus')
+    S.mode, S.local, S.card, S.image = 'wifi', False, None, S.mirror_default
+    S.ready = None
+    return {'ejected': vol, 'next': 'the board is rebooting into SCSI mode; '
+            'it joins Wi-Fi in a few seconds and the sampler loads whatever '
+            'was announced at its next idle poll'}
+
+
+_MIDI = {'tp': None, 'port': None}
+
+
+def midi_tp(port='UX16 2'):
+    import s950live
+    if _MIDI['tp'] is None or _MIDI['port'] != port:
+        import mido
+        names = mido.get_input_names()
+        if not any(port.lower() in n.lower() for n in names):
+            ux = sorted({n for n in names if 'UX16' in n}) or ['none']
+            raise ValueError(f'no MIDI port matching {port!r}; UX16 ports '
+                             f'seen: {", ".join(ux)}. Plug in the S950\'s '
+                             f'UX16, or press EDIT SAMPLE on the panel')
+        _MIDI['tp'] = s950live.MidoTransport(port)
+        _MIDI['port'] = port
+    return _MIDI['tp']
+
+
+def midi_section(port):
+    """The sampler's section over the MIDI service ops, or None."""
+    try:
+        import s950mirror
+        tp = midi_tp(port)
+        p = s950mirror.panel(tp, 0, voices=False)
+        return p['section']
+    except BaseException as e:                                 # noqa: BLE001
+        _MIDI['tp'] = None
+        S.note(f'MIDI section read failed: {e}')
+        return None
+
+
+def do_mode(q):
+    """Is the sampler in DROP-BOX MODE, i.e. polling the mailbox?
+
+    The only proof is an answer: a command is written into the mailbox and
+    the sampler has `timeout` seconds to reply.  It replies only on an
+    idle poll, which the DISK and RECORD pages, an error banner and a
+    sounding voice all hold off.  Over USB-C the board is off the bus, so
+    the sampler cannot answer at all until Eject.
+    """
+    timeout = float(q.get('timeout', ['3'])[0])
+    port = q.get('port', ['UX16 2'])[0]
+    out = {'mode': S.mode, 'polling': False, 'reason': '', 'section': None,
+           'midi': False}
+    if S.mode == 'usb':
+        out['reason'] = ('connected over USB-C: the board is off the SCSI '
+                         'bus, so the sampler cannot poll until the card '
+                         'is ejected. Files are stored on the card; press '
+                         'Eject to hand it back.')
+        S.ready = False
+        return out
+    ok, ping, _ = board_status()
+    if not ok:
+        out['reason'] = f'the ZuluSCSI at {S.host} does not answer'
+        S.ready = False
+        return out
+    t = time.time()
+    try:
+        st = W.refresh_state(S.image, S.host, S.id, loader=card(),
+                             timeout=timeout)
+        out['polling'] = True
+        out['seconds'] = round(time.time() - t, 1)
+        out['resident'] = len(st['items'])
+        out['reason'] = (f'the sampler answered in {out["seconds"]} s: it is '
+                         f'polling the drop box')
+    except RuntimeError as e:
+        out['reason'] = str(e)
+    sec = midi_section(port)
+    if sec is not None:
+        out['midi'] = True
+        out['section'] = sec
+        if not out['polling']:
+            if 'DISK' in sec or 'RECORD' in sec:
+                out['reason'] += f'. The panel is on the {sec} page'
+            elif 'none' in sec:
+                out['reason'] += '. No section is running (an error banner?)'
+    S.ready = out['polling']
+    return out
+
+
+def do_mode_enter(q):
+    """Put the sampler into drop-box mode from here: press EDIT SAMPLE over
+    the MIDI service ops (s950live.press, retried until the section
+    changes), then probe again."""
+    port = q.get('port', ['UX16 2'])[0]
+    if S.mode == 'usb':
+        raise ValueError('over USB-C the sampler cannot poll: eject the '
+                         'card first')
+    try:
+        import s950live
+        tp = midi_tp(port)
+        SECTKEY, EDIT_SAMPLE = 0xB62C, 'EDIT_SAMPLE'
+        want = bytes.fromhex('526b')
+        for i in range(12):
+            if bytes(s950live.peek(tp, SECTKEY, 2)) == want:
+                break
+            s950live.press(tp, [EDIT_SAMPLE], gap=0)
+            time.sleep(0.4 + 0.1 * i)
+        else:
+            raise ValueError('the sampler did not take the EDIT SAMPLE key '
+                             'over MIDI; press it on the panel')
+    except ValueError:
+        raise
+    except BaseException as e:                                 # noqa: BLE001
+        _MIDI['tp'] = None
+        raise ValueError(f'no MIDI path to the sampler ({e}); on the panel '
+                         f'press EDIT SAMPLE or PLAY and release any held '
+                         f'key')
+    S.note('pressed EDIT SAMPLE over MIDI')
+    time.sleep(0.5)
+    return do_mode(q)
+
+
+def require_dropbox():
+    """A load needs the sampler polling.  Probe (cheaply) before writing an
+    announcement the machine would never act on."""
+    if S.mode == 'usb':
+        raise ValueError('over USB-C the sampler cannot load anything: '
+                         'untick "Load into S950 RAM" to store the file on '
+                         'the card, then Eject to hand the card back')
+    m = do_mode({'timeout': ['4']})
+    if not m['polling']:
+        raise ValueError('the sampler is not in drop-box mode: ' + m['reason'])
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -623,12 +1037,20 @@ class Handler(BaseHTTPRequestHandler):
             with S.lock:
                 if path == '/api/status':
                     return self.send_json(status())
+                if path == '/api/devices':
+                    return self.send_json(do_devices(q))
+                if path == '/api/wifi':
+                    return self.send_json(do_wifi_get())
+                if path == '/api/mode':
+                    return self.send_json(do_mode(q))
                 if path == '/api/version':
                     return self.send_json(do_version())
                 if path == '/api/fields':
                     return self.send_json(do_fields())
                 if path == '/api/program':
                     return self.send_json(do_read_program(q))
+                if path == '/api/panel':
+                    return self.send_json(do_panel(q))
                 if path == '/api/wav':
                     wav, meta = do_wav(q)
         except ValueError as e:
@@ -683,6 +1105,16 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json(push_now())
                 if path == '/api/verify':
                     return self.send_json(do_verify())
+                if path == '/api/connect':
+                    return self.send_json(do_connect(q))
+                if path == '/api/wifi':
+                    return self.send_json(do_wifi_set(q))
+                if path == '/api/mount':
+                    return self.send_json(do_mount(q))
+                if path == '/api/eject':
+                    return self.send_json(do_eject())
+                if path == '/api/mode/enter':
+                    return self.send_json(do_mode_enter(q))
             return self.send_json({'error': 'no such endpoint'}, 404)
         except ValueError as e:
             return self.send_json({'error': str(e)}, 400)
@@ -708,7 +1140,7 @@ def main():
                          '(env S950_API_TOKEN)')
     ap.add_argument('--local', action='store_true',
                     help='no board: the mirror is the served image '
-                         '(tools/s950panel.py --card, or a card reader)')
+                         '(a card in a card reader)')
     a = ap.parse_args()
     global TOKEN
     TOKEN = a.token or None
@@ -721,7 +1153,9 @@ def main():
                  f'or, to add the drop box to the image your card already '
                  f'serves:\n'
                  f'  python3 tools/s950dropbox.py addvol {a.image}')
-    S = State(a.image, a.host, a.id, local=a.local)
+    S = State(a.image, a.host, a.id, local=a.local,
+              mode='local' if a.local else 'wifi')
+    S.mirror_default = a.image
     S.note(f'mirror {a.image}, board {a.host} id {a.id}')
     srv = ThreadingHTTPServer((a.listen, a.port), Handler)
     url = f'http://localhost:{a.port}'

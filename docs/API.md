@@ -262,5 +262,48 @@ CLI (token also via `S950_API_TOKEN`, url via `S950_API_URL`):
     python3 tools/s950api.py ... get KICK out.wav
     python3 tools/s950api.py ... rm KICK
 
-Tests: `python3 tools/test_api950.py` runs the server in-process against
-a temp image with an emulated board.
+The server's API tests (`tools/test_api950.py`) run against an emulated
+board and live in the S950 OS repo, not here.
+
+## Connection, sampler mode and the card's Wi-Fi
+
+    GET  /api/v1/devices[?host=IP]   what is reachable: the board over Wi-Fi
+                                     (ping, served image), mounted ZuluSCSI
+                                     cards on USB, ZuluSCSI consoles on USB,
+                                     and the current connection
+    POST /api/v1/connect?mode=wifi&host=IP[&id=N]
+    POST /api/v1/connect?mode=usb&volume=/Volumes/NAME
+                                     switch the editor's device.  usb writes
+                                     straight into S950/HD00_512.hda on the
+                                     card (the board is off the SCSI bus)
+    POST /api/v1/eject               eject the USB card; the board reboots
+                                     onto the bus; the editor goes back to
+                                     Wi-Fi
+    GET  /api/v1/wifi                the card's WiFiSSID (usb mode), the
+                                     Mac's known networks and the one it
+                                     is on
+    POST /api/v1/wifi?ssid=..&password=..
+                                     write WiFiSSID/WiFiPassword into
+                                     zuluscsi.ini on the mounted card (usb
+                                     mode only; blank password keeps the
+                                     card's; never logged)
+    GET  /api/v1/mode[?timeout=S&port=MIDI]
+                                     is the sampler polling the drop box?
+                                     {polling, reason, seconds, section,
+                                     midi}; a mailbox command must be
+                                     answered within timeout (default 3 s)
+    POST /api/v1/mode/enter[?port=MIDI]
+                                     press EDIT SAMPLE over the MIDI service
+                                     ops (leaves DISK/RECORD), then probe
+    GET  /api/v1/panel[?port=MIDI&ch=0&voices=1]
+                                     the front panel read over MIDI: LCD
+                                     text, section, lamps (read only;
+                                     tools/s950mirror.py)
+
+`port` is a substring of the MIDI port name (mido); the default is
+`UX16 2`, the author's interface, so pass your own.
+
+Loads are gated: /sample with load=1, /announce, /load and /program with
+load=1 first probe the sampler (4 s) and answer 400 "the sampler is not in
+drop-box mode: ..." instead of writing an announcement it would never act
+on.  Over usb they answer 400 too: store with load=0, then eject.
