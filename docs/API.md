@@ -1,4 +1,4 @@
-# S950 drop-box HTTP API (v1)
+# SuperOS-950 drop-box HTTP API (v1)
 
 `web/server.py` is the one process that owns the mirror of the ZuluSCSI
 image the sampler polls. It deposits samples and programs into that

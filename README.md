@@ -1,4 +1,4 @@
-# S950 web editor and drop box
+# SuperOS-950 web editor and drop box
 
 Drop audio on a browser page and it appears in an Akai S950's RAM seconds
 later. No DISK page, no disk image to build by hand. The same repo is the
@@ -6,7 +6,7 @@ starting point for writing your own software that controls the sampler.
 
 ## Requirements
 
-- An Akai S950 running **superOS S950 5.0.0**, from
+- An Akai S950 running **SuperOS-950 5.0**, from
   <https://superos303.com>. No firmware, ROM or OS image ships in this
   repo.
 - A SCSI interface in the S950: the Akai **IB-109** or a **Rephlux** SCSI

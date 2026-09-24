@@ -1,7 +1,7 @@
-# Building your own S950 application: MIDI and HTTP
+# Building your own SuperOS-950 application: MIDI and HTTP
 
 This is the developer guide for controlling an Akai S950 running
-superOS 5.0 from your own software. It covers everything a host can do
+SuperOS-950 5.0 from your own software. It covers everything a host can do
 through the MIDI IN / MIDI OUT jacks (play the sampler, move its
 parameters, press its panel keys, read and write its RAM) and points at
 the HTTP API for moving samples and programs.
@@ -9,7 +9,7 @@ the HTTP API for moving samples and programs.
 Status legend, used throughout: **HW** = measured on a real S950,
 **EMU** = proven against the real firmware running in an emulator,
 **ROM** = read from the disassembly of the stock v1.2 ROM,
-**MANUAL** = from the superOS 5.0 owner's manual.
+**MANUAL** = from the SuperOS-950 5.0 owner's manual.
 
 Reference client: [`tools/s950live.py`](../tools/s950live.py), one file,
 Python 3. It needs `mido` and `python-rtmidi` for a real port; the wire
@@ -418,7 +418,7 @@ POKE  F0 47 00 0C 40 00 00  67 00 35 01 00 00 00 00
 
 ## 7. Useful addresses
 
-RAM addresses of superOS 5.0 on the S950. Status per row; everything
+RAM addresses of SuperOS-950 5.0 on the S950. Status per row; everything
 here is safe to PEEK at any time.
 
 | address | size | meaning | status / source |
@@ -536,8 +536,8 @@ to play them and move their parameters.
 
 ## 11. The Akai S900
 
-The Akai S900 running superOS 5.0 answers the same Akai service ops
+An S900 running SuperOS-900 5.0 answers the same Akai service ops
 (PEEK 0E, POKE 0C, CALL 0D) with its own RAM addresses. Those are
-documented in the superOS S900 manual at
+documented in the SuperOS-900 manual at
 <https://superos303.com/doc/s900>. Nothing in section 7 applies to the
 S900.

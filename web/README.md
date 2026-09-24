@@ -1,4 +1,4 @@
-# S950 sample loader
+# SuperOS-950 sample loader
 
 Browser page that converts audio to Akai S950 samples and pushes them
 straight into the sampler's RAM over Wi-Fi, or onto the ZuluSCSI's card
@@ -41,7 +41,7 @@ makes 16-bit PCM -> `POST /api/sample` -> `tools/s950wifi.plan_wav()` encodes
 it to the S950's own disk format and deposits it in the local mirror
 (`build/S950_HD0.img`: FAT allocation, directory entry, mailbox serial),
 recording the changed byte ranges -> those ranges go to the ZuluSCSI over
-UDP 5150 and into the image it is serving -> SuperOS 5.0 polls mailbox
+UDP 5150 and into the image it is serving -> SuperOS-950 5.0 polls mailbox
 block 3 about once a second while the sampler is idle, sees the new serial
 and hands the file to the stock loader.
 

@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Akai S950 Sample Loader</title>
+  <title>SuperOS-950 Sample Loader</title>
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
   <div class="app">
     <div class="header">
       <div class="logo">S950</div>
-      <div class="logo-sub">Akai S950 &middot; SuperOS 5.0 &middot; drop-box editor</div>
+      <div class="logo-sub">SuperOS-950 5.0 &middot; drop-box editor</div>
     </div>
 
     <div class="banner" id="errBanner"></div>
@@ -253,7 +253,7 @@
     <footer>
       Each file is encoded to the S950's own disk format and written into a local mirror of the card image, then only the changed byte
       ranges go to the ZuluSCSI over Wi-Fi (UDP 5150) and into the image it is serving. The announcement in mailbox block 3 is written
-      last, so a transfer that dies never points the sampler at blocks that are not there yet. SuperOS 5.0 polls that mailbox about
+      last, so a transfer that dies never points the sampler at blocks that are not there yet. SuperOS-950 5.0 polls that mailbox about
       once a second while the sampler is idle and hands the file to the stock loader: the sample appears in memory, named, with no DISK
       page and no disk image to build. The sampler stays on the bus throughout.
     </footer>
