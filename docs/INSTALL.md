@@ -59,17 +59,18 @@ The editor keeps a copy of the card's S950 disk on your computer, in
 `build/S950_HD0.img`. **This copy and the image on the card must stay
 identical**, so make one file and put the same file in both places.
 
-1. Copy the SCSI image from the SuperOS-950 download and add the drop-box
-   volume to it:
+1. Copy the SCSI image from the SuperOS-950 download:
 
    ```bash
    mkdir -p build
    cp /path/to/SuperOS-950-v5.0.0-SCSI.img build/S950_HD0.img
-   python3 tools/s950dropbox.py addvol build/S950_HD0.img
+   python3 tools/s950dropbox.py status build/S950_HD0.img
    ```
 
-   `addvol` keeps the `SUPEROS` volume (the bootable OS) and adds a
-   `DROPBOX` volume next to it.
+   `status` should list two volumes: `SUPEROS` (the bootable OS) and
+   `DROPBOX`. If `DROPBOX` is missing (downloads made before 24 Sep 2026),
+   add it with `python3 tools/s950dropbox.py addvol build/S950_HD0.img`;
+   the `SUPEROS` volume is left untouched.
 
    No SuperOS image to hand? `python3 tools/s950dropbox.py new
    build/S950_HD0.img` makes a blank disk with only the drop-box volume.
