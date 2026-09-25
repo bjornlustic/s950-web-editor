@@ -59,11 +59,12 @@ The editor keeps a copy of the card's S950 disk on your computer, in
 `build/S950_HD0.img`. **This copy and the image on the card must stay
 identical**, so make one file and put the same file in both places.
 
-1. Copy the SCSI image from the SuperOS-950 download:
+1. Copy the SCSI image from the SuperOS-950 download (`HD00_512.hda`;
+   downloads before 24 Sep 2026 call it `SuperOS-950-v5.0.0-SCSI.img`):
 
    ```bash
    mkdir -p build
-   cp /path/to/SuperOS-950-v5.0.0-SCSI.img build/S950_HD0.img
+   cp /path/to/HD00_512.hda build/S950_HD0.img
    python3 tools/s950dropbox.py status build/S950_HD0.img
    ```
 
